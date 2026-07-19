@@ -11,13 +11,32 @@ if (!apiKey) {
 const genAI = new GoogleGenerativeAI(apiKey || "dummy_key");
 // Helper function: Local matching fallback for recommendations
 function getFallbackRecommendations(listings, budget, preferredArea, lifestyle) {
-    const scored = listings.map((l) => {
+    const searchArea = preferredArea ? preferredArea.trim().toLowerCase() : "";
+    // Filter listings by preferred area if specified
+    let matchingListings = listings;
+    if (searchArea) {
+        matchingListings = listings.filter((l) => {
+            const loc = l.location.toLowerCase();
+            if (loc.includes(searchArea))
+                return true;
+            // Common state lookups
+            if (searchArea === "ny" && loc.includes("new york"))
+                return true;
+            if (searchArea === "ca" && loc.includes("california"))
+                return true;
+            if (searchArea === "il" && loc.includes("illinois"))
+                return true;
+            if (searchArea === "wa" && loc.includes("washington"))
+                return true;
+            return false;
+        });
+    }
+    // If a location was requested but no listings match, return an empty array
+    if (searchArea && matchingListings.length === 0) {
+        return [];
+    }
+    const scored = matchingListings.map((l) => {
         let score = 0;
-        // Match location
-        const isLocationMatch = preferredArea && l.location.toLowerCase().includes(preferredArea.toLowerCase());
-        if (isLocationMatch) {
-            score += 50;
-        }
         // Budget constraint check
         if (l.price <= budget) {
             score += 30;
@@ -28,16 +47,13 @@ function getFallbackRecommendations(listings, budget, preferredArea, lifestyle) 
             // Over budget penalty
             score -= (l.price - budget) * 0.1;
         }
-        return { listing: l, score, isLocationMatch };
+        return { listing: l, score };
     });
     scored.sort((a, b) => b.score - a.score);
     // Return top 3 matched listings formatted
     return scored.slice(0, 3).map((item) => {
-        const isLocationMatch = item.isLocationMatch;
         const locText = preferredArea || "preferred";
-        const reason = isLocationMatch
-            ? `This room matches your ${locText} area preference and fits perfectly within your $${budget} budget. It features a great layout suitable for a ${lifestyle || "active"} lifestyle, including utilities like ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`
-            : `Although we don't have listings in ${locText}, this room fits within your $${budget} budget and matches your ${lifestyle || "active"} lifestyle preferences. It features ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`;
+        const reason = `This room matches your ${locText} area preference and fits perfectly within your $${budget} budget. It features a great layout suitable for a ${lifestyle || "active"} lifestyle, including utilities like ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`;
         return {
             listingId: item.listing._id.toString(),
             matchReason: reason,
@@ -123,6 +139,8 @@ ${JSON.stringify(listingsSummary, null, 2)}
 
 Please analyze these listings and rank the top 3 matches for this user.
 For each match, write a warm, friendly, editorial 2-3 sentence explanation of "why this fits" their lifestyle, budget, and area preferences.
+
+CRITICAL: If NONE of the available listings match the user's preferred location (even broadly, e.g., the preferred area is in a completely different city, state, or country than all available listings), you MUST return an empty JSON array []. Do not suggest alternative locations if the location has zero matching properties in its city/state.
 
 Return ONLY a JSON array in the following format (no markdown formatting, no backticks, no wrap):
 [
