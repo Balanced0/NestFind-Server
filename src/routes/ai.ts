@@ -20,7 +20,8 @@ function getFallbackRecommendations(listings: any[], budget: number, preferredAr
     let score = 0;
     
     // Match location
-    if (preferredArea && l.location.toLowerCase().includes(preferredArea.toLowerCase())) {
+    const isLocationMatch = preferredArea && l.location.toLowerCase().includes(preferredArea.toLowerCase());
+    if (isLocationMatch) {
       score += 50;
     }
     
@@ -34,16 +35,24 @@ function getFallbackRecommendations(listings: any[], budget: number, preferredAr
       score -= (l.price - budget) * 0.1;
     }
 
-    return { listing: l, score };
+    return { listing: l, score, isLocationMatch };
   });
 
   scored.sort((a, b) => b.score - a.score);
   
   // Return top 3 matched listings formatted
-  return scored.slice(0, 3).map((item) => ({
-    listingId: item.listing._id.toString(),
-    matchReason: `This room matches your ${preferredArea || "preferred"} area preference and fits perfectly within your $${budget} budget. It features a great layout suitable for a ${lifestyle || "active"} lifestyle, including utilities like ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`,
-  }));
+  return scored.slice(0, 3).map((item) => {
+    const isLocationMatch = item.isLocationMatch;
+    const locText = preferredArea || "preferred";
+    const reason = isLocationMatch
+      ? `This room matches your ${locText} area preference and fits perfectly within your $${budget} budget. It features a great layout suitable for a ${lifestyle || "active"} lifestyle, including utilities like ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`
+      : `Although we don't have listings in ${locText}, this room fits within your $${budget} budget and matches your ${lifestyle || "active"} lifestyle preferences. It features ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`;
+    
+    return {
+      listingId: item.listing._id.toString(),
+      matchReason: reason,
+    };
+  });
 }
 
 // Helper function: Local keyword fallback for chatbot
@@ -67,7 +76,7 @@ function getFallbackChatResponse(messages: any[], listingsSummary: any[]) {
   } else if (lastUserMsg.includes("san francisco") || lastUserMsg.includes("mission district")) {
     message = "Here are co-living lofts located in San Francisco, CA. Let me know if you need specific details!";
     filters = { location: "San Francisco", maxPrice: null, amenities: null };
-  } else if (lastUserMsg.includes("los angeles") || lastUserMsg.includes("santa monica") || lastUserMsg.includes("la")) {
+  } else if (lastUserMsg.includes("los angeles") || lastUserMsg.includes("santa monica") || /\bla\b/.test(lastUserMsg)) {
     message = "Here are listings near Los Angeles, CA. Check their specs below!";
     filters = { location: "Los Angeles", maxPrice: null, amenities: null };
   } else if (lastUserMsg.includes("cheap") || lastUserMsg.includes("cheapest") || lastUserMsg.includes("under 1000") || lastUserMsg.includes("under $1000") || lastUserMsg.includes("low budget")) {
@@ -137,7 +146,7 @@ Return ONLY a JSON array in the following format (no markdown formatting, no bac
     let recommendations = [];
     if (apiKey) {
       try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
         const result = await model.generateContent(prompt);
         const text = result.response.text().trim();
         const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
@@ -230,7 +239,7 @@ Do not include any extra text outside the JSON. Return only the JSON object.
     let aiResponse;
     if (apiKey) {
       try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
         const result = await model.generateContent(prompt);
         const text = result.response.text().trim();
         const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();

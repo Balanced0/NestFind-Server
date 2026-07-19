@@ -6,13 +6,93 @@ dotenv.config();
 const router = express.Router();
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
-    console.warn("WARNING: GEMINI_API_KEY is not defined in the environment variables.");
+    console.warn("WARNING: GEMINI_API_KEY is not defined in the environment variables. NestFind will use local fallback algorithms for AI recommendations and chat.");
 }
-const genAI = new GoogleGenerativeAI(apiKey || "");
+const genAI = new GoogleGenerativeAI(apiKey || "dummy_key");
+// Helper function: Local matching fallback for recommendations
+function getFallbackRecommendations(listings, budget, preferredArea, lifestyle) {
+    const scored = listings.map((l) => {
+        let score = 0;
+        // Match location
+        const isLocationMatch = preferredArea && l.location.toLowerCase().includes(preferredArea.toLowerCase());
+        if (isLocationMatch) {
+            score += 50;
+        }
+        // Budget constraint check
+        if (l.price <= budget) {
+            score += 30;
+            // Close to budget max is better (more premium match)
+            score += (l.price / budget) * 10;
+        }
+        else {
+            // Over budget penalty
+            score -= (l.price - budget) * 0.1;
+        }
+        return { listing: l, score, isLocationMatch };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    // Return top 3 matched listings formatted
+    return scored.slice(0, 3).map((item) => {
+        const isLocationMatch = item.isLocationMatch;
+        const locText = preferredArea || "preferred";
+        const reason = isLocationMatch
+            ? `This room matches your ${locText} area preference and fits perfectly within your $${budget} budget. It features a great layout suitable for a ${lifestyle || "active"} lifestyle, including utilities like ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`
+            : `Although we don't have listings in ${locText}, this room fits within your $${budget} budget and matches your ${lifestyle || "active"} lifestyle preferences. It features ${item.listing.amenities.slice(0, 3).join(", ") || "high-speed Wifi"}.`;
+        return {
+            listingId: item.listing._id.toString(),
+            matchReason: reason,
+        };
+    });
+}
+// Helper function: Local keyword fallback for chatbot
+function getFallbackChatResponse(messages, listingsSummary) {
+    const lastUserMsg = messages[messages.length - 1]?.content?.toLowerCase() || "";
+    let message = "";
+    let filters = null;
+    if (lastUserMsg.includes("how do i list") || lastUserMsg.includes("how to list") || lastUserMsg.includes("list a room")) {
+        message = "To list a room on NestFind, please sign in and click the 'Add Listing' button in the navigation bar. Fill in the form details (location, price, dates, amenities, and image link) and click publish. It will immediately show up in our Explore directory!";
+    }
+    else if (lastUserMsg.includes("brooklyn") || lastUserMsg.includes("williamsburg")) {
+        message = "I searched our rooms and found some co-living listings in Brooklyn. Take a look below!";
+        filters = { location: "Brooklyn", maxPrice: null, amenities: null };
+    }
+    else if (lastUserMsg.includes("seattle") || lastUserMsg.includes("capitol hill")) {
+        message = "Here are our co-living suites located in Seattle, WA. You can check their details below.";
+        filters = { location: "Seattle", maxPrice: null, amenities: null };
+    }
+    else if (lastUserMsg.includes("chicago") || lastUserMsg.includes("loop") || lastUserMsg.includes("wicker park")) {
+        message = "Here are our available rooms in Chicago, IL. Check out their details below.";
+        filters = { location: "Chicago", maxPrice: null, amenities: null };
+    }
+    else if (lastUserMsg.includes("san francisco") || lastUserMsg.includes("mission district")) {
+        message = "Here are co-living lofts located in San Francisco, CA. Let me know if you need specific details!";
+        filters = { location: "San Francisco", maxPrice: null, amenities: null };
+    }
+    else if (lastUserMsg.includes("los angeles") || lastUserMsg.includes("santa monica") || /\bla\b/.test(lastUserMsg)) {
+        message = "Here are listings near Los Angeles, CA. Check their specs below!";
+        filters = { location: "Los Angeles", maxPrice: null, amenities: null };
+    }
+    else if (lastUserMsg.includes("cheap") || lastUserMsg.includes("cheapest") || lastUserMsg.includes("under 1000") || lastUserMsg.includes("under $1000") || lastUserMsg.includes("low budget")) {
+        message = "I've filtered our listings to show you rooms under $1,000. Take a look at these affordable co-living options:";
+        filters = { location: null, maxPrice: 1000, amenities: null };
+    }
+    else if (lastUserMsg.includes("wifi") || lastUserMsg.includes("internet")) {
+        message = "I found listings that offer high-speed internet/Wifi as part of their amenities.";
+        filters = { location: null, maxPrice: null, amenities: ["Wifi"] };
+    }
+    else if (lastUserMsg.includes("laundry") || lastUserMsg.includes("washer")) {
+        message = "These co-living homes feature in-unit laundry or shared washing facilities:";
+        filters = { location: null, maxPrice: null, amenities: ["Laundry"] };
+    }
+    else {
+        message = "I am NestFind's co-living AI assistant. You can ask me how to list rooms, find the cheapest spaces, or search by locations like Brooklyn, San Francisco, Chicago, or Seattle!";
+    }
+    return { message, filters };
+}
 // AI Recommendation Route
 router.post("/recommend", async (req, res) => {
     try {
-        const { budget, preferredArea, lifestyle, commutePriority, savedListings } = req.body;
+        const { budget, preferredArea, lifestyle, commutePriority } = req.body;
         if (!budget || !preferredArea || !lifestyle || !commutePriority) {
             return res.status(400).json({ message: "Onboarding preferences are required." });
         }
@@ -35,8 +115,8 @@ You are NestFind's Smart Recommendation Engine.
 A user has completed their co-living onboarding profile:
 - Monthly Budget: up to $${budget}
 - Preferred Area: "${preferredArea}"
-- Lifestyle: "${lifestyle}" (e.g. quiet, social, clean, night owl)
-- Commute Priority: "${commutePriority}" (e.g. transit near, close to downtown)
+- Lifestyle: "${lifestyle}"
+- Commute Priority: "${commutePriority}"
 
 Here are the available co-living listings in our database:
 ${JSON.stringify(listingsSummary, null, 2)}
@@ -52,22 +132,22 @@ Return ONLY a JSON array in the following format (no markdown formatting, no bac
   }
 ]
 `;
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        // Clean markdown backticks if present
-        const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
         let recommendations = [];
-        try {
-            recommendations = JSON.parse(cleanJson);
+        if (apiKey) {
+            try {
+                const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
+                const result = await model.generateContent(prompt);
+                const text = result.response.text().trim();
+                const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+                recommendations = JSON.parse(cleanJson);
+            }
+            catch (geminiError) {
+                console.error("Gemini API call failed, using local recommendation algorithm:", geminiError);
+                recommendations = getFallbackRecommendations(listings, Number(budget), preferredArea, lifestyle);
+            }
         }
-        catch (parseError) {
-            console.error("Failed to parse Gemini recommendation JSON:", text);
-            // Fallback: rank top listings manually
-            recommendations = listings.slice(0, 3).map(l => ({
-                listingId: l._id.toString(),
-                matchReason: `A solid option in ${l.location} that fits within a budget of $${budget}. Includes ${l.amenities.slice(0, 3).join(", ")}.`
-            }));
+        else {
+            recommendations = getFallbackRecommendations(listings, Number(budget), preferredArea, lifestyle);
         }
         // Merge recommendations with full listing data
         const populatedRecommendations = recommendations
@@ -91,7 +171,7 @@ Return ONLY a JSON array in the following format (no markdown formatting, no bac
 // AI Chat Route (Context-Aware Chat Widget)
 router.post("/chat", async (req, res) => {
     try {
-        const { messages } = req.body; // Array of { role: 'user' | 'assistant', content: string }
+        const { messages } = req.body;
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ message: "Messages array is required." });
         }
@@ -106,7 +186,7 @@ router.post("/chat", async (req, res) => {
             shortDescription: l.shortDescription,
         }));
         const conversationHistoryText = messages
-            .slice(-6) // Keep last 6 messages to stay within limits and maintain context
+            .slice(-6)
             .map((m) => `${m.role === "user" ? "User" : "NestFind AI"}: ${m.content}`)
             .join("\n");
         const systemPrompt = `
@@ -140,20 +220,22 @@ JSON format structure:
 Do not include any extra text outside the JSON. Return only the JSON object.
 `;
         const prompt = `${systemPrompt}\n\nRecent History:\n${conversationHistoryText}\n\nOutput JSON:`;
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
         let aiResponse;
-        try {
-            aiResponse = JSON.parse(cleanJson);
+        if (apiKey) {
+            try {
+                const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
+                const result = await model.generateContent(prompt);
+                const text = result.response.text().trim();
+                const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+                aiResponse = JSON.parse(cleanJson);
+            }
+            catch (geminiError) {
+                console.error("Gemini Chat failed, using rule-based fallback parser:", geminiError);
+                aiResponse = getFallbackChatResponse(messages, listingsSummary);
+            }
         }
-        catch (parseError) {
-            console.error("Failed to parse Gemini chat JSON response:", text);
-            aiResponse = {
-                message: "I'm having a little trouble parsing the rooms search. Ask me about our co-living spaces, or type a location and budget to find matches!",
-                filters: null,
-            };
+        else {
+            aiResponse = getFallbackChatResponse(messages, listingsSummary);
         }
         // If filters are extracted, query MongoDB for matching listings
         let matchedListings = [];
@@ -167,7 +249,19 @@ Do not include any extra text outside the JSON. Return only the JSON object.
                 dbFilter.price = { $lte: Number(maxPrice) };
             }
             if (amenities && Array.isArray(amenities) && amenities.length > 0) {
-                dbFilter.amenities = { $all: amenities.map((a) => new RegExp(`^${a}$`, "i")) };
+                // Map back to standard names (e.g. wifi -> High-speed Wifi)
+                const mappedAmenities = amenities.map((a) => {
+                    if (a.toLowerCase() === "wifi")
+                        return "High-speed Wifi";
+                    if (a.toLowerCase() === "laundry")
+                        return "In-unit Laundry";
+                    if (a.toLowerCase() === "kitchen")
+                        return "Chef's Kitchen";
+                    if (a.toLowerCase() === "garden")
+                        return "Shared Garden";
+                    return a;
+                });
+                dbFilter.amenities = { $all: mappedAmenities };
             }
             matchedListings = await Listing.find(dbFilter).limit(3);
         }

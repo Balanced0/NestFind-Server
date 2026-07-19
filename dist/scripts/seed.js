@@ -1,9 +1,8 @@
 import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import { connectDB } from "../config/db.js";
+import { initAuth } from "../config/auth.js";
 import { Listing } from "../models/Listing.js";
-import { Review } from "../models/Review.js";
 dotenv.config();
 const listingsTemplate = [
     {
@@ -92,50 +91,46 @@ async function seed() {
         const db = mongoose.connection.db;
         if (!db)
             throw new Error("No DB connection");
-        // Clear existing collections
-        console.log("Clearing existing collections...");
-        await Listing.deleteMany({});
-        await Review.deleteMany({});
-        // Clear Better Auth managed collections
+        // Initialize Better Auth to ensure collections and configurations are ready
+        const auth = initAuth();
+        // Drop custom collections to clear any stale indexes (like sessionId_1_reviewerId_1)
+        console.log("Dropping existing listings and reviews collections...");
+        try {
+            await db.collection("listings").drop();
+        }
+        catch (_) { }
+        try {
+            await db.collection("reviews").drop();
+        }
+        catch (_) { }
+        // Drop Better Auth managed collections to clear any stale indexes (like handle_1)
         const collections = ["users", "sessions", "accounts", "verifications"];
         for (const col of collections) {
             try {
-                await db.collection(col).deleteMany({});
+                await db.collection(col).drop();
+                console.log(`Dropped collection: ${col}`);
             }
             catch (_) { }
         }
-        // Create users directly in MongoDB (bypass Better Auth API for seeding)
-        // Better Auth stores passwords hashed in the accounts collection
-        console.log("Creating users directly in MongoDB...");
+        // Create users using Better Auth server-side API to ensure proper hashing and format
+        console.log("Creating users via Better Auth API...");
         const usersData = [
-            { id: new mongoose.Types.ObjectId().toHexString(), email: "demo@nestfind.com", name: "Alex Mercer", password: "Password123!" },
-            { id: new mongoose.Types.ObjectId().toHexString(), email: "sarah.host@nestfind.com", name: "Sarah Jenkins", password: "Password123!" },
-            { id: new mongoose.Types.ObjectId().toHexString(), email: "david.renter@nestfind.com", name: "David Chen", password: "Password123!" },
-            { id: new mongoose.Types.ObjectId().toHexString(), email: "emma.watson@nestfind.com", name: "Emma Watson", password: "Password123!" },
+            { email: "demo@nestfind.com", name: "Alex Mercer", password: "Password123!" },
+            { email: "sarah.host@nestfind.com", name: "Sarah Jenkins", password: "Password123!" },
+            { email: "david.renter@nestfind.com", name: "David Chen", password: "Password123!" },
+            { email: "emma.watson@nestfind.com", name: "Emma Watson", password: "Password123!" },
         ];
-        const now = new Date();
+        const createdUsers = [];
         for (const u of usersData) {
-            const hashedPassword = await bcrypt.hash(u.password, 10);
-            // Insert into users collection (Better Auth format)
-            await db.collection("users").insertOne({
-                id: u.id,
-                name: u.name,
-                email: u.email,
-                emailVerified: true,
-                createdAt: now,
-                updatedAt: now,
+            const result = await auth.api.signUpEmail({
+                body: {
+                    email: u.email,
+                    password: u.password,
+                    name: u.name,
+                },
             });
-            // Insert into accounts collection (Better Auth format for email/password)
-            await db.collection("accounts").insertOne({
-                id: new mongoose.Types.ObjectId().toHexString(),
-                userId: u.id,
-                accountId: u.email,
-                providerId: "credential",
-                password: hashedPassword,
-                createdAt: now,
-                updatedAt: now,
-            });
-            console.log(`Created user: ${u.name} <${u.email}>`);
+            createdUsers.push(result.user);
+            console.log(`Created user: ${result.user.name} <${result.user.email}>`);
         }
         // Create listings
         console.log("Creating listings...");
@@ -143,7 +138,7 @@ async function seed() {
         for (let i = 0; i < listingsTemplate.length; i++) {
             const template = listingsTemplate[i];
             // Alternate owners between Sarah (index 1) and Alex/demo (index 0)
-            const ownerId = i % 2 === 0 ? usersData[1].id : usersData[0].id;
+            const ownerId = i % 2 === 0 ? createdUsers[1].id : createdUsers[0].id;
             const listing = new Listing({ ...template, ownerId });
             await listing.save();
             console.log(`Listing seeded: "${listing.title}"`);
@@ -156,10 +151,11 @@ async function seed() {
             { listingIdx: 1, userIdx: 3, rating: 4, comment: "Perfect location near the trains. The roommates are quiet and respectful. The shared garden is a great bonus. The bedroom can get a little chilly in the mornings, but overall a wonderful place to live." },
             { listingIdx: 4, userIdx: 0, rating: 5, comment: "Living here has been an absolute dream. The beach is a short walk away and the balcony views are unbelievable. Alex and David are super friendly. Would give 6 stars if I could!" },
         ];
+        const now = new Date();
         for (const r of reviewsData) {
             await db.collection("reviews").insertOne({
                 listingId: createdListings[r.listingIdx]._id,
-                userId: usersData[r.userIdx].id,
+                userId: createdUsers[r.userIdx].id,
                 rating: r.rating,
                 comment: r.comment,
                 createdAt: now,

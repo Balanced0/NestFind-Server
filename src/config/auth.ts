@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // Internal singleton — set once after DB connects via initAuth()
-let _auth: ReturnType<typeof betterAuth> | null = null;
+let _auth: any = null;
 
 /**
  * Call this once in index.ts AFTER connectDB() has resolved.
@@ -45,7 +45,7 @@ export function getAuth() {
 }
 
 // Backwards-compatible named export used by routes (lazy proxy)
-export const auth = new Proxy({} as ReturnType<typeof betterAuth>, {
+export const auth = new Proxy({} as any, {
   get(_target, prop) {
     return (getAuth() as any)[prop];
   },
