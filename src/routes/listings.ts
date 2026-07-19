@@ -19,6 +19,20 @@ async function getSessionUser(req: express.Request) {
   }
 }
 
+// Helper to calculate listing stats (rating average and review count)
+async function getListingStats(listingId: any) {
+  try {
+    const reviews = await Review.find({ listingId });
+    const reviewCount = reviews.length;
+    const averageRating = reviewCount > 0
+      ? Number((reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount).toFixed(1))
+      : 0;
+    return { reviewCount, averageRating };
+  } catch (error) {
+    return { reviewCount: 0, averageRating: 0 };
+  }
+}
+
 // GET /api/listings - Get all listings (with search, filter, sort, pagination)
 router.get("/", async (req, res) => {
   try {
@@ -82,8 +96,17 @@ router.get("/", async (req, res) => {
       .skip(skip)
       .limit(limitNum);
 
+    const populatedListings = [];
+    for (const listing of listings) {
+      const stats = await getListingStats(listing._id);
+      populatedListings.push({
+        ...listing.toObject(),
+        ...stats,
+      });
+    }
+
     res.json({
-      listings,
+      listings: populatedListings,
       total,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum),
@@ -102,7 +125,17 @@ router.get("/user/manage", async (req, res) => {
     }
 
     const listings = await Listing.find({ ownerId: user.id }).sort({ createdAt: -1 });
-    res.json(listings);
+    
+    const populated = [];
+    for (const listing of listings) {
+      const stats = await getListingStats(listing._id);
+      populated.push({
+        ...listing.toObject(),
+        ...stats,
+      });
+    }
+
+    res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message || "Failed to fetch user listings" });
   }
@@ -145,11 +178,26 @@ router.get("/:id", async (req, res) => {
       location: { $regex: city, $options: "i" }
     }).limit(4);
 
+    const populatedRelated = [];
+    for (const item of related) {
+      const stats = await getListingStats(item._id);
+      populatedRelated.push({
+        ...item.toObject(),
+        ...stats,
+      });
+    }
+
+    const mainStats = await getListingStats(listing._id);
+    const listingWithStats = {
+      ...listing.toObject(),
+      ...mainStats,
+    };
+
     res.json({
-      listing,
+      listing: listingWithStats,
       owner: owner || { name: "System Host", email: "support@nestfind.com" },
       reviews: populatedReviews,
-      related,
+      related: populatedRelated,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message || "Failed to fetch listing detail" });
