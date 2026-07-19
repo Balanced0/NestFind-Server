@@ -8,6 +8,7 @@ import { toNodeHandler } from "better-auth/node";
 import listingsRouter from "./routes/listings.js";
 import reviewsRouter from "./routes/reviews.js";
 import aiRouter from "./routes/ai.js";
+import usersRouter from "./routes/users.js";
 
 dotenv.config();
 
@@ -47,6 +48,7 @@ app.use((req, res, next) => {
 app.use("/api/listings", listingsRouter);
 app.use("/api/reviews", reviewsRouter);
 app.use("/api/ai", aiRouter);
+app.use("/api/users", usersRouter);
 
 // Health check route
 app.get("/api/health", (req, res) => {
