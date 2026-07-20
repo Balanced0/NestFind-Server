@@ -51,6 +51,7 @@ export function initAuth() {
                 enabled: true,
             },
             skipStateCookieCheck: true,
+            storeStateStrategy: "database",
         },
     });
     return _auth;
