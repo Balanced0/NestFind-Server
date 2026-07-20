@@ -55,7 +55,11 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "NestFind server is running smoothly." });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`[Server] NestFind backend listening on port ${PORT}`);
-});
+// Start server only if not running on Vercel
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`[Server] NestFind backend listening on port ${PORT}`);
+  });
+}
+
+export default app;
