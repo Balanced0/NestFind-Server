@@ -16,11 +16,24 @@ await connectDB();
 // 2. Now that Mongoose is connected, safely initialise Better Auth
 initAuth();
 // CORS configuration - MUST be before any router, and support credentials for auth cookies
+const allowedOrigins = [
+    process.env.FRONTEND_URL || "http://localhost:3000",
+    "http://localhost:3000",
+];
 app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like Postman/curl) or from allowed origins
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error(`CORS blocked: ${origin}`));
+        }
+    },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
+    exposedHeaders: ["Set-Cookie"],
 }));
 // Mount Better Auth handler BEFORE express.json() to prevent body-parsing issues
 app.all("/api/auth/*", toNodeHandler(getAuth()));
