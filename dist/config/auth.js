@@ -20,6 +20,7 @@ export function initAuth() {
         }),
         emailAndPassword: {
             enabled: true,
+            autoSignIn: false, // Don't auto-login after registration; user must log in explicitly
         },
         socialProviders: {
             google: {
@@ -39,6 +40,17 @@ export function initAuth() {
                     partitioned: true,
                 }
                 : undefined,
+        },
+        // .vercel.app subdomains are on the Public Suffix List — browsers treat
+        // nest-find-gules.vercel.app and nest-find-server-tawny.vercel.app as
+        // separate registrable domains, so the OAuth state cookie set by the
+        // server cannot be read back even with sameSite=none.
+        // skipStateCookieCheck is the accepted workaround for cross-domain Vercel deploys.
+        account: {
+            accountLinking: {
+                enabled: true,
+            },
+            skipStateCookieCheck: true,
         },
     });
     return _auth;
